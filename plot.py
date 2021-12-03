@@ -89,13 +89,20 @@ def analyze(graph):
     results["density"] = nx.density(graph)
     results["edge_num"] = len(graph.edges())
     results["node_num"] = len(graph.node)
-    ranks = nx.algorithms.link_analysis.pagerank_alg.pagerank(graph)
+
+    # Google PageRank algorithm
+    page_ranks = nx.algorithms.link_analysis.pagerank_alg.pagerank(graph)
 
     # Sort dict based on rank
     results["page_rank"] = {
         key: value
-        for key, value in sorted(ranks.items(), reverse=True, key=lambda item: item[1])
+        for key, value in sorted(
+            page_ranks.items(), reverse=True, key=lambda item: item[1]
+        )
     }
+
+    # Hyperlink-Induced Topic Search (HITS) algorithm
+    results["hits"] = nx.algorithms.link_analysis.hits_alg.hits(graph)
 
     return results
 
@@ -121,6 +128,56 @@ def write_graph_results(filename, results):
 
     with open(filename, "w") as f:
         json.dump(results, f, indent=4)
+
+
+def append_country_information(input_file, node_index, results):
+    """Get country from GitGeo csv file and add to rank results, as a percentage of country distribution.
+
+    Args:
+        input_file - input file. Should be same as in original form_graph call
+        node_index - index of nodes in input_file to parse
+        results - dictionary of analysis results
+
+    Returns:
+        results - modified results with added country data
+    """
+
+    node_locations = collections.defaultdict(dict)
+
+    # Read import file from GitGeo:
+    with open(input_file, "r") as f:
+
+        # Skip first line
+        next(f)
+
+        for line in f:
+            info = line.strip().split(",")
+
+            location = info[-1]
+            node = info[node_index]
+            if location in node_locations[node]:
+                # Location already recorded for this node - increment
+                node_locations[node][location] += 1
+            else:
+                node_locations[node][location] = 1
+
+    # Change locations to percentage
+    for node, locations in node_locations.items():
+        s = sum(locations.values())
+        for key, value in locations.items():
+            percent = value * 100.0 / s
+            node_locations[node][key] = percent
+            print(key, percent)
+
+    # Add locations to rank
+    for node in results["page_rank"]:
+        results["page_rank"][node] = {
+            **{"rank": results["page_rank"][node]},
+            **node_locations[node],
+        }
+        node_locations[node]["Rank"] = results["page_rank"][node]
+
+    return results
 
 
 def parse_command_line_arguments():
@@ -158,5 +215,8 @@ if __name__ == "__main__":
 
     graph = form_graph(args.filepath, args.node_index, args.edge_index)
     results = analyze(graph)
+    locational_results = append_country_information(
+        args.filepath, args.node_index, results
+    )
     filename = args.filename or args.filepath
-    write_graph_results(filename, results)
+    write_graph_results(filename, locational_results)
