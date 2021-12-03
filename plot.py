@@ -1,104 +1,36 @@
-import plotly.graph_objects as go
+"""Create and analyze graph from csv file. Intended for use with Github contributors and projects but will work with
+any arbitrary nodes and edges"""
 
 import collections
 import itertools
+import os
+import time
+import argparse
+import json
 import networkx as nx
-
-
-def random_plot():
-    G = nx.random_geometric_graph(200, 0.125)
-
-    # Create edges
-    edge_x = []
-    edge_y = []
-    for edge in G.edges():
-        x0, y0 = G.node[edge[0]]["pos"]
-        x1, y1 = G.node[edge[1]]["pos"]
-        edge_x.append(x0)
-        edge_x.append(x1)
-        edge_x.append(None)
-        edge_y.append(y0)
-        edge_y.append(y1)
-        edge_y.append(None)
-
-    edge_trace = go.Scatter(
-        x=edge_x,
-        y=edge_y,
-        line=dict(width=0.5, color="#888"),
-        hoverinfo="none",
-        mode="lines",
-    )
-
-    node_x = []
-    node_y = []
-    for node in G.nodes():
-        x, y = G.node[node]["pos"]
-        node_x.append(x)
-        node_y.append(y)
-
-    node_trace = go.Scatter(
-        x=node_x,
-        y=node_y,
-        mode="markers",
-        hoverinfo="text",
-        marker=dict(
-            showscale=True,
-            # colorscale options
-            #'Greys' | 'YlGnBu' | 'Greens' | 'YlOrRd' | 'Bluered' | 'RdBu' |
-            #'Reds' | 'Blues' | 'Picnic' | 'Rainbow' | 'Portland' | 'Jet' |
-            #'Hot' | 'Blackbody' | 'Earth' | 'Electric' | 'Viridis' |
-            colorscale="YlGnBu",
-            reversescale=True,
-            color=[],
-            size=10,
-            colorbar=dict(
-                thickness=15,
-                title="Node Connections",
-                xanchor="left",
-                titleside="right",
-            ),
-            line_width=2,
-        ),
-    )
-
-    # Color based on connection strength
-    node_adjacencies = []
-    node_text = []
-    i = G.adj
-    for node, adjacencies in G.adj.items():
-        node_adjacencies.append(len(adjacencies))
-        node_text.append("# of connections: " + str(len(adjacencies)))
-
-    node_trace.marker.color = node_adjacencies
-    node_trace.text = node_text
-
-    # Create graph
-    fig = go.Figure(
-        data=[edge_trace, node_trace],
-        layout=go.Layout(
-            title="<br>Network graph made with Python",
-            titlefont_size=16,
-            showlegend=False,
-            hovermode="closest",
-            margin=dict(b=20, l=5, r=5, t=40),
-            annotations=[
-                dict(
-                    text="Python code: <a href='https://plotly.com/ipython-notebooks/network-graphs/'> https://plotly.com/ipython-notebooks/network-graphs/</a>",
-                    showarrow=False,
-                    xref="paper",
-                    yref="paper",
-                    x=0.005,
-                    y=-0.002,
-                )
-            ],
-            xaxis=dict(showgrid=False, zeroline=False, showticklabels=False),
-            yaxis=dict(showgrid=False, zeroline=False, showticklabels=False),
-        ),
-    )
-    fig.show()
+from pathlib import Path
 
 
 def form_graph(input_file, node_index, edge_index):
+    """Create a networkx graph from an input csv file.
+
+    Reads csv file with one connection per line (such as github contributor and the project they worked on) and returns
+    graph linking those elements
+    Example input format:
+
+    project,contributor,other_info,more_info
+    project,contributor2,other_info,more_info
+    project2,contributor,other_info,more_info
+    project2,contributor3,other_info,more_info
+
+    Args:
+        input_file - a csv file that contains information for graph, such as github contributors and projects
+        node_index - csv index to be used for nodes
+        edge_index - csv index to be used for edges
+
+    Returns:
+        G - a networkx graph
+    """
 
     edges = collections.defaultdict(list)
 
@@ -126,38 +58,105 @@ def form_graph(input_file, node_index, edge_index):
 
 
 def analyze(graph):
+    """Analyzes an input networkx graph.
+
+    Calculations done:
+    node_num - total number of nodes in graph
+    edge_num - total number of edges in graph
+    avg_degree - average of number of edges that are incident to all nodes
+    density - ratio of the number of edges with respect to the maximum possible edges
+    assortativity - the tendency for nodes of high degree in a graph to be connected to high degree nodes
+    average_clustering - a measure of the degree to which nodes in a graph tend to cluster together
+    page_rank - results of Google PageRank algorithm
+
+    Args:
+        graph - networkx graph with weight="weight"
+
+    Returns:
+        results - a dictionary with all finished calculations
+    """
 
     results = {}
 
-    results["node_num"] = len(graph.node)
-    results["edge_num"] = len(graph.edges())
-    degree = graph.degree(weight="weight")
-    results["avg_degree"] = sum(degree.values()) / len(degree)
-    results["density"] = nx.density(graph)
     results["assortativity"] = nx.degree_assortativity_coefficient(
         graph, weight="weight"
     )
     results["average_clustering"] = nx.algorithms.cluster.average_clustering(
         graph, weight="weight"
     )
+    degree = graph.degree(weight="weight")
+    results["avg_degree"] = sum(degree.values()) / len(degree)
+    results["density"] = nx.density(graph)
+    results["edge_num"] = len(graph.edges())
+    results["node_num"] = len(graph.node)
+    ranks = nx.algorithms.link_analysis.pagerank_alg.pagerank(graph)
+
+    # Sort dict based on rank
+    results["page_rank"] = {
+        key: value
+        for key, value in sorted(ranks.items(), reverse=True, key=lambda item: item[1])
+    }
 
     return results
 
 
-def save_graph_results(results, file_path="graph.txt"):
-    with open(file_path, "w") as f:
-        for result in results:
-            f.write(f"{result}: {results[result]}\n")
-            print(f"{result}: {results[result]}")
+def write_graph_results(filename, results):
+    """Write dictionary results to json file.
+
+    Args:
+        filename - filename base for output file. Can be basename or full path (path will be trimmed)
+        results - dictionary of analysis results
+
+    Returns:
+        null
+    """
+
+    timestamp = time.strftime("%Y%m%d-%H%M%S")
+    basename = os.path.basename(filename)
+    basename = os.path.splitext(basename)[0]
+
+    filename = Path.cwd() / "results"
+    filename.mkdir(exist_ok=True)
+    filename /= basename + "_" + timestamp + ".json"
+
+    with open(filename, "w") as f:
+        json.dump(results, f, indent=4)
+
+
+def parse_command_line_arguments():
+    """Parse command line arguments with argparse."""
+    parser = argparse.ArgumentParser(
+        description="Convert csv file into nodes and edges, such as github contributors and projects",
+        epilog="For help with this program, contact John Speed at jmeyers@iqt.org.",
+    )
+    parser.add_argument(
+        "--node-index",
+        default=1,
+        type=int,
+        help="Index of nodes in csv file",
+    )
+    parser.add_argument(
+        "--edge-index",
+        default=0,
+        type=int,
+        help="Index of edges in csv file",
+    )
+    parser.add_argument(
+        "--filepath",
+        help="Filepath to csv file for analysis",
+    )
+    parser.add_argument(
+        "--filename",
+        default=None,
+        help="Base file name for analysis results (timestamp will be added)",
+    )
+    return parser.parse_args()
 
 
 if __name__ == "__main__":
-    project_index = 0
-    contributor_index = 1
-    location_index = 2
-    country_index = 3
-    # form_graph("results/contributors-trimmed.csv", contributor_index, project_index)
-    # form_graph("results/contributors-trimmed.csv", project_index, contributor_index)
-    graph = form_graph("results/contributors.csv", contributor_index, project_index)
+    args = parse_command_line_arguments()
+
+    graph = form_graph(args.filepath, args.node_index, args.edge_index)
     results = analyze(graph)
-    save_graph_results(results)
+    filename = args.filename or args.filepath
+    write_graph_results(filename, results)
