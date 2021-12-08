@@ -9,6 +9,7 @@ import argparse
 import json
 import networkx as nx
 from pathlib import Path
+import plotly as go
 
 
 def form_graph(input_file, node_index, edge_index):
@@ -180,6 +181,90 @@ def append_country_information(input_file, node_index, results):
     return results
 
 
+def visualize(graph):
+    """Visualize a networkx network graph.
+
+    Args:
+        graph - networkx graph
+
+    Returns:
+        null
+    """
+    pos_ = nx.spring_layout(graph)
+
+    # For each edge, make an edge_trace, append to list
+    edge_trace = []
+    for edge in graph.edges():
+
+        if graph.get_edge_data(edge[0], edge[1])["weight"] > 0:
+            char_1 = edge[0]
+            char_2 = edge[1]
+        x0, y0 = pos_[char_1]
+        x1, y1 = pos_[char_2]
+        text = (
+            char_1
+            + "--"
+            + char_2
+            + ": "
+            + str(graph.get_edge_data(edge[0], edge[1])["weight"])
+        )
+
+        trace = go.graph_objects.Scatter(
+            x=[x0, x1, None],
+            y=[y0, y1, None],
+            line=dict(
+                width=0.3 * graph.get_edge_data(edge[0], edge[1])["weight"] ** 1.75,
+                color="cornflowerblue",
+            ),
+            hoverinfo="text",
+            text=([text]),
+            mode="lines",
+        )
+        edge_trace.append(trace)
+
+    # Make a node trace
+    node_trace = go.graph_objects.Scatter(
+        x=[],
+        y=[],
+        text=[],
+        textposition="top center",
+        textfont_size=10,
+        mode="markers+text",
+        hoverinfo="none",
+        marker=dict(color=[], size=[], line=None),
+    )
+    # For each node in graph, get the position and size and add to the node_trace
+    for node in graph.nodes():
+        x, y = pos_[node]
+        node_trace["x"] += tuple([x])
+        node_trace["y"] += tuple([y])
+        node_trace["marker"]["color"] += tuple(["cornflowerblue"])
+        # node_trace["marker"]["size"] += tuple([5 * graph.nodes()[node]["size"]])
+        node_trace["text"] += tuple(["<b>" + node + "</b>"])
+
+    # Customize layout
+    layout = go.graph_objects.Layout(
+        paper_bgcolor="rgba(0,0,0,0)",  # transparent background
+        plot_bgcolor="rgba(0,0,0,0)",  # transparent 2nd background
+        xaxis={"showgrid": False, "zeroline": False},  # no gridlines
+        yaxis={"showgrid": False, "zeroline": False},  # no gridlines
+    )
+    # Create figure
+    fig = go.graph_objects.Figure(layout=layout)
+    # Add all edge traces
+    for trace in edge_trace:
+        fig.add_trace(trace)
+    # Add node trace
+    fig.add_trace(node_trace)
+    # Remove legend
+    fig.update_layout(showlegend=False)
+    # Remove tick labels
+    fig.update_xaxes(showticklabels=False)
+    fig.update_yaxes(showticklabels=False)
+    # Show figure
+    fig.show()
+
+
 def parse_command_line_arguments():
     """Parse command line arguments with argparse."""
     parser = argparse.ArgumentParser(
@@ -214,6 +299,7 @@ if __name__ == "__main__":
     args = parse_command_line_arguments()
 
     graph = form_graph(args.filepath, args.node_index, args.edge_index)
+    visualize(graph)
     results = analyze(graph)
     locational_results = append_country_information(
         args.filepath, args.node_index, results
